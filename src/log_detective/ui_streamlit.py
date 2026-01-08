@@ -4,8 +4,15 @@ This module provides an interactive web interface for analyzing
 authentication logs and viewing security cases.
 """
 
-import json
+import sys
 from pathlib import Path
+
+# Add src directory to path for Streamlit Cloud deployment
+src_path = Path(__file__).parent.parent
+if str(src_path) not in sys.path:
+    sys.path.insert(0, str(src_path))
+
+import json
 
 import pandas as pd
 import streamlit as st
