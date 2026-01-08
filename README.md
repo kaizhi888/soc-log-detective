@@ -2,10 +2,13 @@
 
 **Suspicious Login Detector + Case Report Generator**
 
+🌐 **[Live Demo](https://kaizhi-soc-log-detective.streamlit.app/)**
+
 A Python-based cybersecurity tool that ingests authentication logs, detects suspicious patterns using rule-based detectors, and generates professional incident reports. Designed for solo SOC analysts and interview demonstrations.
 
 ![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://kaizhi-soc-log-detective.streamlit.app/)
 
 ## Features
 
