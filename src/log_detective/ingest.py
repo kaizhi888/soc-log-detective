@@ -7,6 +7,7 @@ normalized AuthEvent objects with device fingerprint derivation.
 import hashlib
 import json
 import logging
+from collections.abc import Iterable
 from datetime import datetime
 from pathlib import Path
 
@@ -17,6 +18,8 @@ logger = logging.getLogger(__name__)
 
 def parse_jsonl(path: Path | str) -> tuple[list[AuthEvent], dict[str, AuthEvent]]:
     """Parse a JSONL file into AuthEvent objects.
+
+    Invalid records are skipped with a warning that includes the line number.
     
     Args:
         path: Path to the JSONL file.
@@ -28,53 +31,62 @@ def parse_jsonl(path: Path | str) -> tuple[list[AuthEvent], dict[str, AuthEvent]
         
     Raises:
         FileNotFoundError: If the file doesn't exist.
-        ValueError: If a line contains invalid JSON or missing required fields.
     """
     path = Path(path)
     if not path.exists():
         raise FileNotFoundError(f"Log file not found: {path}")
     
+    with path.open(encoding="utf-8") as lines:
+        events, event_index = _parse_lines(lines)
+
+    logger.info(f"Parsed {len(events)} events from {path}")
+    return events, event_index
+
+
+def parse_jsonl_from_string(content: str) -> tuple[list[AuthEvent], dict[str, AuthEvent]]:
+    """Parse a JSONL upload, warning and skipping any invalid records."""
+    events, event_index = _parse_lines(content.split("\n"))
+    logger.info(f"Parsed {len(events)} events from string content")
+    return events, event_index
+
+
+def _parse_lines(lines: Iterable[str]) -> tuple[list[AuthEvent], dict[str, AuthEvent]]:
     events: list[AuthEvent] = []
     event_index: dict[str, AuthEvent] = {}
-    
-    content = path.read_text(encoding="utf-8")
-    lines = content.strip().split("\n")
-    
+
     for line_num, line in enumerate(lines, start=1):
         line = line.strip()
         if not line:
             continue
-            
+
         try:
             data = json.loads(line)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Skipping malformed JSON on line {line_num}: {e}")
+        except json.JSONDecodeError as error:
+            logger.warning("Skipping malformed JSON on line %d: %s", line_num, error)
             continue
-        
-        # Store raw data
+
+        if not isinstance(data, dict):
+            logger.warning("Skipping invalid event on line %d: expected a JSON object", line_num)
+            continue
+
         data["raw"] = data.copy()
-        
-        # Parse timestamp if it's a string
-        if isinstance(data.get("ts"), str):
-            data["ts"] = _parse_timestamp(data["ts"])
-        
-        # Derive device_id if missing
-        if not data.get("device_id"):
-            data["device_id"] = _generate_fingerprint(
-                data.get("user_agent", ""),
-                data.get("source_ip", "")
-            )
-        
         try:
+            if isinstance(data.get("ts"), str):
+                data["ts"] = _parse_timestamp(data["ts"])
             event = AuthEvent(**data)
-            events.append(event)
-            event_index[event.event_id] = event
-            logger.debug(f"Parsed event {event.event_id} for user {event.user}")
-        except Exception as e:
-            logger.warning(f"Skipping invalid event on line {line_num}: {e}")
+        except ValueError as error:
+            logger.warning("Skipping invalid event on line %d: %s", line_num, error)
             continue
-    
-    logger.info(f"Parsed {len(events)} events from {path}")
+
+        if not event.device_id:
+            event.device_id = _generate_fingerprint(
+                data.get("user_agent", ""), event.source_ip
+            )
+
+        events.append(event)
+        event_index[event.event_id] = event
+        logger.debug("Parsed event %s for user %s", event.event_id, event.user)
+
     return events, event_index
 
 
@@ -111,14 +123,14 @@ def _parse_timestamp(ts_str: str) -> datetime:
         raise ValueError(f"Cannot parse timestamp: {ts_str}")
 
 
-def _generate_fingerprint(user_agent: str, source_ip: str) -> str:
+def _generate_fingerprint(user_agent: str | None, source_ip: str) -> str:
     """Generate a stable device fingerprint from UA and IP prefix.
     
     Uses the first three octets of the IP (/24 network) and the
     user agent string to create a deterministic identifier.
     
     Args:
-        user_agent: User agent string.
+        user_agent: User agent string, if provided.
         source_ip: Source IP address.
         
     Returns:
@@ -136,51 +148,3 @@ def _generate_fingerprint(user_agent: str, source_ip: str) -> str:
     hash_digest = hashlib.md5(fingerprint_input.encode()).hexdigest()
     
     return f"fp-{hash_digest[:12]}"
-
-
-def parse_jsonl_from_string(content: str) -> tuple[list[AuthEvent], dict[str, AuthEvent]]:
-    """Parse JSONL content from a string (for Streamlit file uploads).
-    
-    Args:
-        content: JSONL content as a string.
-        
-    Returns:
-        Tuple of (events_list, event_index).
-    """
-    events: list[AuthEvent] = []
-    event_index: dict[str, AuthEvent] = {}
-    
-    lines = content.strip().split("\n")
-    
-    for line_num, line in enumerate(lines, start=1):
-        line = line.strip()
-        if not line:
-            continue
-            
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError as e:
-            logger.warning(f"Skipping malformed JSON on line {line_num}: {e}")
-            continue
-        
-        data["raw"] = data.copy()
-        
-        if isinstance(data.get("ts"), str):
-            data["ts"] = _parse_timestamp(data["ts"])
-        
-        if not data.get("device_id"):
-            data["device_id"] = _generate_fingerprint(
-                data.get("user_agent", ""),
-                data.get("source_ip", "")
-            )
-        
-        try:
-            event = AuthEvent(**data)
-            events.append(event)
-            event_index[event.event_id] = event
-        except Exception as e:
-            logger.warning(f"Skipping invalid event on line {line_num}: {e}")
-            continue
-    
-    logger.info(f"Parsed {len(events)} events from string content")
-    return events, event_index
