@@ -73,6 +73,39 @@ class TestParseJsonlFromString:
         assert events[0].event_id == "test-001"
 
 
+@pytest.mark.parametrize("source", ["file", "string"])
+@pytest.mark.parametrize(
+    "invalid_fields",
+    [None, {"ts": "invalid"}, {"source_ip": None, "device_id": None}],
+    ids=["non-object", "invalid-timestamp", "invalid-source-ip"],
+)
+def test_skips_invalid_event_and_keeps_later_records(
+    source, invalid_fields, tmp_path, sample_event_data, caplog
+):
+    invalid_event = (
+        None if invalid_fields is None else {**sample_event_data, **invalid_fields}
+    )
+    later_event = {**sample_event_data, "event_id": "test-002", "device_id": None}
+    content = "\n".join(
+        ["", json.dumps(sample_event_data), json.dumps(invalid_event), json.dumps(later_event)]
+    )
+
+    if source == "file":
+        path = tmp_path / "mixed.jsonl"
+        path.write_text(content, encoding="utf-8")
+        events, event_index = parse_jsonl(path)
+    else:
+        events, event_index = parse_jsonl_from_string(content)
+
+    assert [event.event_id for event in events] == ["test-001", "test-002"]
+    assert event_index == {event.event_id: event for event in events}
+    assert events[1].raw == later_event
+    assert events[1].device_id == _generate_fingerprint(
+        later_event["user_agent"], later_event["source_ip"]
+    )
+    assert "Skipping invalid event on line 3:" in caplog.text
+
+
 class TestDeviceFingerprint:
     """Tests for device fingerprint generation."""
     
